@@ -1,14 +1,13 @@
 {
-  "name": "wopr-plugin-voice-elevenlabs-tts",
-  "version": "1.0.0",
+  "author": "",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
   "description": "ElevenLabs TTS provider for WOPR voice plugin system",
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.14",
+    "@types/node": "^20.11.5",
+    "typescript": "^5.3.3"
   },
   "keywords": [
     "wopr",
@@ -17,16 +16,22 @@
     "voice",
     "speech-synthesis"
   ],
-  "author": "",
   "license": "MIT",
-  "dependencies": {
-    "node-fetch": "^3.3.2"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.5",
-    "typescript": "^5.3.3"
-  },
+  "main": "dist/index.js",
+  "name": "wopr-plugin-voice-elevenlabs-tts",
   "peerDependencies": {
     "wopr": "*"
-  }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "biome check src/ && tsc --noEmit",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "format": "biome format --write src/",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --fix src/"
+  },
+  "type": "module",
+  "types": "dist/index.d.ts",
+  "version": "1.0.0"
 }

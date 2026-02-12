@@ -19,7 +19,7 @@
   ],
   "license": "MIT",
   "main": "dist/index.js",
-  "name": "wopr-plugin-voice-elevenlabs-tts",
+  "name": "@wopr-network/wopr-plugin-voice-elevenlabs-tts",
   "peerDependencies": {
     "wopr": "*"
   },
@@ -30,9 +30,16 @@
     "dev": "tsc --watch",
     "format": "biome format --write src/",
     "lint": "biome check src/",
-    "lint:fix": "biome check --fix src/"
+    "lint:fix": "biome check --fix src/",
+    "prepublishOnly": "npm run build"
   },
   "type": "module",
   "types": "dist/index.d.ts",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ]
 }

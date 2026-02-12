@@ -5,6 +5,7 @@
  * Based on clawdbot PR 1154 talk mode implementation.
  */
 
+import type { WOPRPluginContext } from "@wopr-network/plugin-types";
 import type {
   TTSProvider,
   TTSOptions,
@@ -12,8 +13,6 @@ import type {
   Voice,
   VoicePluginMetadata,
   AudioFormat,
-} from "../../../src/voice/types.js";
-import type {
   ElevenLabsVoice,
   ElevenLabsVoicesResponse,
   ElevenLabsTTSRequest,
@@ -439,16 +438,9 @@ export class ElevenLabsTTSProvider implements TTSProvider {
       throw new Error("Response body is null");
     }
 
-    // Stream audio chunks
-    const reader = response.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        yield Buffer.from(value);
-      }
-    } finally {
-      reader.releaseLock();
+    // Stream audio chunks from node-fetch ReadableStream
+    for await (const chunk of response.body) {
+      yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     }
   }
 
@@ -474,7 +466,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 // Plugin Registration
 // =============================================================================
 
-export default function register(ctx: any) {
+export default function register(ctx: WOPRPluginContext) {
   const provider = new ElevenLabsTTSProvider({
     apiKey: process.env.ELEVENLABS_API_KEY,
   });
@@ -491,8 +483,13 @@ export default function register(ctx: any) {
 // Exports
 // =============================================================================
 
-export { ElevenLabsTTSProvider };
 export type {
+  TTSProvider,
+  TTSOptions,
+  TTSSynthesisResult,
+  Voice,
+  VoicePluginMetadata,
+  AudioFormat,
   ElevenLabsConfig,
   ElevenLabsTTSOptions,
   VoiceDirective,

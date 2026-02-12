@@ -1,6 +1,7 @@
 {
   "author": "",
   "dependencies": {
+    "@wopr-network/plugin-types": "^0.1.0",
     "node-fetch": "^3.3.2"
   },
   "description": "ElevenLabs TTS provider for WOPR voice plugin system",

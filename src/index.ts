@@ -516,19 +516,24 @@ export default function register(ctx: WOPRPluginContext) {
 	});
 
 	ctx.registerExtension("tts", provider);
-	// registerCapabilityProvider is present at runtime but not yet reflected in
-	// the published @wopr-network/plugin-types types (pre-dating wopr#731).
-	(
-		ctx as unknown as {
-			registerCapabilityProvider(
-				type: string,
-				entry: { id: string; name: string },
-			): void;
+
+	// registerCapabilityProvider exists at runtime but not yet in published types
+	if (
+		"registerCapabilityProvider" in ctx &&
+		typeof (ctx as any).registerCapabilityProvider === "function"
+	) {
+		try {
+			(ctx as any).registerCapabilityProvider("tts", {
+				id: provider.metadata.name,
+				name: provider.metadata.description || provider.metadata.name,
+			});
+		} catch (err) {
+			console.warn(
+				"Failed to register TTS capability provider:",
+				err instanceof Error ? err.message : err,
+			);
 		}
-	).registerCapabilityProvider("tts", {
-		id: provider.metadata.name,
-		name: provider.metadata.description || provider.metadata.name,
-	});
+	}
 }
 
 // =============================================================================

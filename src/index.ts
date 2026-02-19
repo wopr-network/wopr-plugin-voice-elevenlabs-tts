@@ -242,6 +242,10 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		return this.cachedVoices;
 	}
 
+	get currentModelId(): string {
+		return this.config.defaultModelId || "eleven_turbo_v2_5";
+	}
+
 	validateConfig(): void {
 		if (!this.config.apiKey) {
 			throw new Error("ELEVENLABS_API_KEY is required");
@@ -560,7 +564,7 @@ const plugin: WOPRPlugin & {
 
 	getWebMCPHandlers() {
 		if (!_provider) return {};
-		return getWebMCPHandlers(_provider, "eleven_turbo_v2_5");
+		return getWebMCPHandlers(_provider, _provider.currentModelId);
 	},
 
 	async shutdown() {

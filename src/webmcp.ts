@@ -98,7 +98,8 @@ export function getWebMCPHandlers(
 			if (voices.length === 0) {
 				voices = await provider.fetchVoices();
 			}
-			const lang = input.language as string | undefined;
+			const lang =
+				typeof input.language === "string" ? input.language : undefined;
 			if (lang) {
 				voices = voices.filter((v) =>
 					v.language?.toLowerCase().startsWith(lang.toLowerCase()),

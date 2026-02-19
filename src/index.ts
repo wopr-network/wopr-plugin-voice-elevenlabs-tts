@@ -5,22 +5,23 @@
  * Based on clawdbot PR 1154 talk mode implementation.
  */
 
-import type { WOPRPluginContext } from "@wopr-network/plugin-types";
+import type { WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
+import fetch from "node-fetch";
 import type {
-	TTSProvider,
-	TTSOptions,
-	TTSSynthesisResult,
-	Voice,
-	VoicePluginMetadata,
 	AudioFormat,
-	ElevenLabsVoice,
-	ElevenLabsVoicesResponse,
-	ElevenLabsTTSRequest,
 	ElevenLabsConfig,
 	ElevenLabsTTSOptions,
+	ElevenLabsTTSRequest,
+	ElevenLabsVoice,
+	ElevenLabsVoicesResponse,
+	TTSOptions,
+	TTSProvider,
+	TTSSynthesisResult,
+	Voice,
 	VoiceDirective,
+	VoicePluginMetadata,
 } from "./types.js";
-import fetch from "node-fetch";
+import { getWebMCPHandlers, getWebMCPToolDeclarations } from "./webmcp.js";
 
 // =============================================================================
 // Helper Functions
@@ -505,51 +506,87 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 // Plugin Registration
 // =============================================================================
 
-export default function register(ctx: WOPRPluginContext) {
-	const provider = new ElevenLabsTTSProvider({
-		apiKey: process.env.ELEVENLABS_API_KEY,
-	});
+let _provider: ElevenLabsTTSProvider | null = null;
 
-	// Initialize voice cache on startup
-	provider.fetchVoices().catch((err) => {
-		console.warn("Failed to fetch ElevenLabs voices on startup:", err.message);
-	});
+// Extended with getManifest/getWebMCPHandlers for webui bindPluginLifecycle()
+const plugin: WOPRPlugin & {
+	getManifest(): { webmcpTools: ReturnType<typeof getWebMCPToolDeclarations> };
+	getWebMCPHandlers(): Record<
+		string,
+		(input: Record<string, unknown>) => Promise<unknown>
+	>;
+} = {
+	name: "voice-elevenlabs-tts",
+	version: "1.0.0",
+	description: "ElevenLabs high-quality text-to-speech",
 
-	ctx.registerExtension("tts", provider);
+	async init(ctx: WOPRPluginContext) {
+		_provider = new ElevenLabsTTSProvider({
+			apiKey: process.env.ELEVENLABS_API_KEY,
+		});
 
-	// registerCapabilityProvider exists at runtime but not yet in published types
-	if (
-		"registerCapabilityProvider" in ctx &&
-		typeof (ctx as any).registerCapabilityProvider === "function"
-	) {
-		try {
-			(ctx as any).registerCapabilityProvider("tts", {
-				id: provider.metadata.name,
-				name: provider.metadata.description || provider.metadata.name,
-			});
-		} catch (err) {
+		// Initialize voice cache on startup (fire-and-forget)
+		_provider.fetchVoices().catch((err: Error) => {
 			console.warn(
-				"Failed to register TTS capability provider:",
-				err instanceof Error ? err.message : err,
+				"Failed to fetch ElevenLabs voices on startup:",
+				err.message,
 			);
+		});
+
+		ctx.registerExtension("tts", _provider);
+
+		// registerCapabilityProvider exists at runtime but not yet in published types
+		if (
+			"registerCapabilityProvider" in ctx &&
+			typeof (ctx as any).registerCapabilityProvider === "function"
+		) {
+			try {
+				(ctx as any).registerCapabilityProvider("tts", {
+					id: _provider.metadata.name,
+					name: _provider.metadata.description || _provider.metadata.name,
+				});
+			} catch (err) {
+				console.warn(
+					"Failed to register TTS capability provider:",
+					err instanceof Error ? err.message : err,
+				);
+			}
 		}
-	}
-}
+	},
+
+	getManifest() {
+		return { webmcpTools: getWebMCPToolDeclarations() };
+	},
+
+	getWebMCPHandlers() {
+		if (!_provider) return {};
+		return getWebMCPHandlers(_provider, "eleven_turbo_v2_5");
+	},
+
+	async shutdown() {
+		if (_provider) {
+			await _provider.shutdown();
+			_provider = null;
+		}
+	},
+};
+
+export default plugin;
 
 // =============================================================================
 // Exports
 // =============================================================================
 
 export type {
-	TTSProvider,
-	TTSOptions,
-	TTSSynthesisResult,
-	Voice,
-	VoicePluginMetadata,
 	AudioFormat,
 	ElevenLabsConfig,
-	ElevenLabsTTSOptions,
-	VoiceDirective,
 	ElevenLabsModel,
 	ElevenLabsOutputFormat,
+	ElevenLabsTTSOptions,
+	TTSOptions,
+	TTSProvider,
+	TTSSynthesisResult,
+	Voice,
+	VoiceDirective,
+	VoicePluginMetadata,
 } from "./types.js";

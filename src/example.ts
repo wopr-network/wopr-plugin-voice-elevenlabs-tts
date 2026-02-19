@@ -4,9 +4,9 @@
  * Run with: node --loader ts-node/esm src/example.ts
  */
 
-import { ElevenLabsTTSProvider } from "./index.js";
 import fs from "fs";
 import path from "path";
+import { ElevenLabsTTSProvider } from "./index.js";
 
 async function main() {
 	// Initialize provider

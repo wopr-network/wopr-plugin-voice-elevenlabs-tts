@@ -46,5 +46,13 @@
   ],
   "release": {
     "extends": "@wopr-network/semantic-release-config"
+  },
+  "wopr": {
+    "plugin": {
+      "category": "voice",
+      "description": "ElevenLabs TTS (hosted API)",
+      "name": "voice-elevenlabs-tts",
+      "type": "tts"
+    }
   }
 }

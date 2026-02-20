@@ -33,5 +33,13 @@
   },
   "type": "module",
   "types": "dist/index.d.ts",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "wopr": {
+    "plugin": {
+      "category": "voice",
+      "description": "ElevenLabs TTS (hosted API)",
+      "name": "voice-elevenlabs-tts",
+      "type": "tts"
+    }
+  }
 }

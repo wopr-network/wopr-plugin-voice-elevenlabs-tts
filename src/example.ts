@@ -4,8 +4,8 @@
  * Run with: node --loader ts-node/esm src/example.ts
  */
 
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { ElevenLabsTTSProvider } from "./index.js";
 
 async function main() {

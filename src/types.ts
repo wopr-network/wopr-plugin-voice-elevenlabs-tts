@@ -132,6 +132,7 @@ export interface ElevenLabsTTSRequest {
 	previous_text?: string;
 	next_text?: string;
 	language_code?: string;
+	speed?: number;
 }
 
 export interface ElevenLabsConfig {
@@ -189,6 +190,8 @@ export interface ElevenLabsTTSOptions {
 	outputFormat?: string;
 	language?: string;
 	latencyTier?: number;
+	/** Audio buffer of a reference voice for instant voice cloning */
+	referenceAudio?: Buffer;
 }
 
 export type ElevenLabsModel =

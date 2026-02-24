@@ -108,3 +108,99 @@ describe("ElevenLabsTTSProvider voice cloning", () => {
 		expect(mockFetch).toHaveBeenCalledTimes(3);
 	});
 });
+
+describe("ElevenLabsTTSProvider streamSynthesize voice cloning", () => {
+	let provider: InstanceType<typeof ElevenLabsTTSProvider>;
+
+	beforeEach(() => {
+		mockFetch.mockReset();
+		provider = new ElevenLabsTTSProvider({
+			apiKey: "test-key",
+			defaultVoiceId: "default-voice",
+		});
+	});
+
+	it("streams with cloned voice when referenceAudio provided", async () => {
+		const refAudio = Buffer.from("streaming-reference-audio");
+
+		// First call: voice clone (POST /voices/add)
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ voice_id: "stream-cloned-voice" }),
+			text: async () => "",
+		} as ReturnType<typeof fetch> extends Promise<infer R> ? R : never);
+
+		// Second call: streaming TTS with cloned voice
+		const audioChunk = Buffer.from("audio-chunk");
+		async function* makeStream() {
+			yield audioChunk;
+		}
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			body: makeStream(),
+			text: async () => "",
+		} as unknown as ReturnType<typeof fetch> extends Promise<infer R>
+			? R
+			: never);
+
+		const chunks: Buffer[] = [];
+		for await (const chunk of provider.streamSynthesize("Hello stream clone", {
+			referenceAudio: refAudio,
+		} as Parameters<typeof provider.synthesize>[1])) {
+			chunks.push(chunk);
+		}
+
+		expect(chunks.length).toBeGreaterThan(0);
+
+		// First call should be to /voices/add
+		const cloneUrl = mockFetch.mock.calls[0][0] as string;
+		expect(cloneUrl).toContain("/voices/add");
+
+		// Second call should use the cloned voice ID for streaming
+		const streamUrl = mockFetch.mock.calls[1][0] as string;
+		expect(streamUrl).toContain("/text-to-speech/stream-cloned-voice/stream");
+	});
+
+	it("uses L1 cache: streamSynthesize reuses voice cloned by synthesize", async () => {
+		const refAudio = Buffer.from("shared-cache-audio");
+
+		// 1. synthesize clone call
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ voice_id: "shared-cloned-voice" }),
+			text: async () => "",
+		} as ReturnType<typeof fetch> extends Promise<infer R> ? R : never);
+		// 2. synthesize TTS call
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			arrayBuffer: async () => new ArrayBuffer(50),
+			text: async () => "",
+		} as ReturnType<typeof fetch> extends Promise<infer R> ? R : never);
+		// 3. streamSynthesize TTS call (no second clone — L1 cache hit)
+		async function* makeStream2() {
+			yield Buffer.from("chunk");
+		}
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			body: makeStream2(),
+			text: async () => "",
+		} as unknown as ReturnType<typeof fetch> extends Promise<infer R>
+			? R
+			: never);
+
+		await provider.synthesize("First", {
+			referenceAudio: refAudio,
+		} as Parameters<typeof provider.synthesize>[1]);
+
+		for await (const _ of provider.streamSynthesize("Second", {
+			referenceAudio: refAudio,
+		} as Parameters<typeof provider.synthesize>[1])) {
+			// consume
+		}
+
+		// 3 calls total: 1 clone + 1 synthesize TTS + 1 stream TTS (no second clone)
+		expect(mockFetch).toHaveBeenCalledTimes(3);
+		const streamUrl = mockFetch.mock.calls[2][0] as string;
+		expect(streamUrl).toContain("/text-to-speech/shared-cloned-voice/stream");
+	});
+});

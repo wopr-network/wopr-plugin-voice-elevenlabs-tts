@@ -5,8 +5,8 @@
  * Based on clawdbot PR 1154 talk mode implementation.
  */
 
+import { createHash } from "node:crypto";
 import type { WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
-import { createHash } from "crypto";
 import fetch from "node-fetch";
 import type {
 	AudioFormat,
@@ -320,8 +320,11 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		if (cached) return cached;
 
 		// ElevenLabs instant voice clone: POST /v1/voices/add
+		// Use a deterministic name (hash prefix) so the same audio always maps to
+		// the same display name, making it easier to identify in the ElevenLabs UI.
+		const voiceName = `wopr-clone-${hashKey.slice(0, 16)}`;
 		const formData = new FormData();
-		formData.append("name", `wopr-clone-${Date.now()}`);
+		formData.append("name", voiceName);
 		const audioArrayBuffer = new ArrayBuffer(referenceAudio.byteLength);
 		new Uint8Array(audioArrayBuffer).set(referenceAudio);
 		formData.append(
@@ -335,8 +338,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 			headers: {
 				"xi-api-key": this.config.apiKey,
 			},
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			body: formData as any,
+			body: formData as unknown as import("node-fetch").RequestInit["body"],
 		});
 
 		if (!response.ok) {
@@ -457,7 +459,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		if (opts.latencyTier !== undefined) {
 			queryParams.set(
 				"optimize_streaming_latency",
-				validateLatencyTier(opts.latencyTier)!.toString(),
+				String(validateLatencyTier(opts.latencyTier)),
 			);
 		}
 
@@ -528,6 +530,15 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 			latencyTier: directive?.latency_tier,
 		} as ElevenLabsTTSOptions);
 
+		// If referenceAudio provided, create/get cloned voice and use its ID
+		const extOpts = options as ElevenLabsTTSOptions | undefined;
+		if (extOpts?.referenceAudio) {
+			const clonedVoiceId = await this.getOrCreateClonedVoice(
+				extOpts.referenceAudio,
+			);
+			opts.voice = clonedVoiceId;
+		}
+
 		const voiceId = opts.voice || this.config.defaultVoiceId;
 		if (!voiceId) {
 			throw new Error("Voice ID is required");
@@ -563,7 +574,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		if (opts.latencyTier !== undefined) {
 			queryParams.set(
 				"optimize_streaming_latency",
-				validateLatencyTier(opts.latencyTier)!.toString(),
+				String(validateLatencyTier(opts.latencyTier)),
 			);
 		} else {
 			queryParams.set("optimize_streaming_latency", "0"); // Default to lowest latency for streaming
@@ -666,12 +677,18 @@ const plugin: WOPRPlugin & {
 		ctx.registerExtension("tts", _provider);
 
 		// registerCapabilityProvider exists at runtime but not yet in published types
+		const ctxUnknown = ctx as unknown as Record<string, unknown>;
 		if (
 			"registerCapabilityProvider" in ctx &&
-			typeof (ctx as any).registerCapabilityProvider === "function"
+			typeof ctxUnknown.registerCapabilityProvider === "function"
 		) {
 			try {
-				(ctx as any).registerCapabilityProvider("tts", {
+				(
+					ctxUnknown.registerCapabilityProvider as (
+						type: string,
+						meta: { id: string; name: string },
+					) => void
+				)("tts", {
 					id: _provider.metadata.name,
 					name: _provider.metadata.description || _provider.metadata.name,
 				});

@@ -12,7 +12,6 @@ import type {
 	ElevenLabsConfig,
 	ElevenLabsTTSOptions,
 	ElevenLabsTTSRequest,
-	ElevenLabsVoice,
 	ElevenLabsVoicesResponse,
 	TTSOptions,
 	TTSProvider,
@@ -198,7 +197,12 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		type: "tts",
 		description:
 			"ElevenLabs high-quality text-to-speech with streaming support",
-		capabilities: ["streaming", "voice-selection", "voice-parameters"],
+		capabilities: [
+			"streaming",
+			"voice-selection",
+			"voice-parameters",
+			"voice-cloning",
+		],
 		local: false,
 		requires: {
 			env: ["ELEVENLABS_API_KEY"],
@@ -220,6 +224,8 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 	private voicesCachedAt: number = 0;
 	private readonly VOICE_CACHE_TTL = 3600000; // 1 hour
 	private readonly BASE_URL = "https://api.elevenlabs.io/v1";
+	/** Cache of cloned voice IDs keyed by a hash of the referenceAudio buffer */
+	private clonedVoiceCache = new Map<string, string>();
 
 	constructor(config: Partial<ElevenLabsConfig>) {
 		const apiKey = config.apiKey || process.env.ELEVENLABS_API_KEY || "";
@@ -288,6 +294,51 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		return this.cachedVoices;
 	}
 
+	/**
+	 * Create an instant cloned voice from a reference audio sample.
+	 * Caches the resulting voice_id keyed by a simple hash of the audio buffer.
+	 */
+	private async getOrCreateClonedVoice(
+		referenceAudio: Buffer,
+	): Promise<string> {
+		// Simple hash: use first 32 bytes + length as cache key
+		const hashKey = `${referenceAudio.length}-${referenceAudio.subarray(0, 32).toString("hex")}`;
+
+		const cached = this.clonedVoiceCache.get(hashKey);
+		if (cached) return cached;
+
+		// ElevenLabs instant voice clone: POST /v1/voices/add
+		const formData = new FormData();
+		formData.append("name", `wopr-clone-${Date.now()}`);
+		const audioArrayBuffer = new ArrayBuffer(referenceAudio.byteLength);
+		new Uint8Array(audioArrayBuffer).set(referenceAudio);
+		formData.append(
+			"files",
+			new Blob([audioArrayBuffer], { type: "audio/wav" }),
+			"reference.wav",
+		);
+
+		const response = await fetch(`${this.BASE_URL}/voices/add`, {
+			method: "POST",
+			headers: {
+				"xi-api-key": this.config.apiKey,
+			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			body: formData as any,
+		});
+
+		if (!response.ok) {
+			const error = await response.text();
+			throw new Error(
+				`ElevenLabs voice cloning failed: ${response.statusText} - ${error}`,
+			);
+		}
+
+		const data = (await response.json()) as { voice_id: string };
+		this.clonedVoiceCache.set(hashKey, data.voice_id);
+		return data.voice_id;
+	}
+
 	async synthesize(
 		text: string,
 		options?: TTSOptions,
@@ -317,6 +368,15 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 			language: directive?.lang || directive?.language,
 			latencyTier: directive?.latency_tier,
 		} as ElevenLabsTTSOptions);
+
+		// If referenceAudio provided, create/get cloned voice and use its ID
+		const extOpts = options as ElevenLabsTTSOptions | undefined;
+		if (extOpts?.referenceAudio) {
+			const clonedVoiceId = await this.getOrCreateClonedVoice(
+				extOpts.referenceAudio,
+			);
+			opts.voice = clonedVoiceId;
+		}
 
 		const voiceId = opts.voice || this.config.defaultVoiceId;
 		if (!voiceId) {
@@ -429,7 +489,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		const modelId =
 			opts.modelId || this.config.defaultModelId || "eleven_turbo_v2_5";
 		const outputFormat = opts.outputFormat || mapAudioFormat(options?.format);
-		const speed = resolveSpeed(opts.speed, opts.rate);
+		const _speed = resolveSpeed(opts.speed, opts.rate);
 
 		const requestBody: ElevenLabsTTSRequest = {
 			text: cleanText,

@@ -189,6 +189,8 @@ export interface ElevenLabsTTSOptions {
 	outputFormat?: string;
 	language?: string;
 	latencyTier?: number;
+	/** Audio buffer of a reference voice for instant voice cloning */
+	referenceAudio?: Buffer;
 }
 
 export type ElevenLabsModel =

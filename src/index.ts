@@ -225,8 +225,19 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 	private voicesCachedAt: number = 0;
 	private readonly VOICE_CACHE_TTL = 3600000; // 1 hour
 	private readonly BASE_URL = "https://api.elevenlabs.io/v1";
-	/** Cache of cloned voice IDs keyed by a hash of the referenceAudio buffer */
+	/**
+	 * In-memory LRU cache of cloned voice IDs keyed by SHA-256 hash of the
+	 * reference audio buffer. Bounded to 50 entries to stay within ElevenLabs
+	 * voice count limits.
+	 *
+	 * NOTE: This cache is intentionally not persisted via context.storage. Cloned
+	 * voices are ephemeral synthesis aids, not durable application state. Persisting
+	 * them would require a schema migration and introduce storage coupling for
+	 * data that is cheap to recreate. Voices evicted from this cache (or lost on
+	 * restart) are deleted from ElevenLabs to avoid account voice-count exhaustion.
+	 */
 	private clonedVoiceCache = new Map<string, string>();
+	logger?: import("@wopr-network/plugin-types").PluginLogger;
 
 	constructor(config: Partial<ElevenLabsConfig>) {
 		const apiKey = config.apiKey || process.env.ELEVENLABS_API_KEY || "";
@@ -336,13 +347,43 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		}
 
 		const data = (await response.json()) as { voice_id: string };
-		// Evict oldest entry if cache has reached cap of 50
+		// Evict oldest entry if cache has reached cap of 50; delete from ElevenLabs
+		// to avoid account voice-count exhaustion.
 		if (this.clonedVoiceCache.size >= 50) {
 			const oldestKey = this.clonedVoiceCache.keys().next().value;
-			if (oldestKey !== undefined) this.clonedVoiceCache.delete(oldestKey);
+			if (oldestKey !== undefined) {
+				const evictedVoiceId = this.clonedVoiceCache.get(oldestKey);
+				this.clonedVoiceCache.delete(oldestKey);
+				if (evictedVoiceId) {
+					this.deleteClonedVoice(evictedVoiceId).catch((err: Error) => {
+						this.logger?.warn(
+							`[ElevenLabs] Failed to delete evicted cloned voice ${evictedVoiceId}: ${err.message}`,
+						);
+					});
+				}
+			}
 		}
 		this.clonedVoiceCache.set(hashKey, data.voice_id);
 		return data.voice_id;
+	}
+
+	/**
+	 * Delete a cloned voice from the ElevenLabs account.
+	 * Called on LRU eviction and on plugin shutdown to avoid voice-count exhaustion.
+	 */
+	private async deleteClonedVoice(voiceId: string): Promise<void> {
+		const response = await fetch(`${this.BASE_URL}/voices/${voiceId}`, {
+			method: "DELETE",
+			headers: {
+				"xi-api-key": this.config.apiKey,
+			},
+		});
+		if (!response.ok) {
+			const error = await response.text();
+			throw new Error(
+				`ElevenLabs voice delete failed: ${response.statusText} - ${error}`,
+			);
+		}
 	}
 
 	async synthesize(
@@ -569,7 +610,19 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 	}
 
 	async shutdown(): Promise<void> {
-		// No cleanup needed for HTTP-based provider
+		// Delete all cached cloned voices from ElevenLabs to avoid voice-count exhaustion.
+		const deletePromises: Promise<void>[] = [];
+		for (const [, voiceId] of this.clonedVoiceCache) {
+			deletePromises.push(
+				this.deleteClonedVoice(voiceId).catch((err: Error) => {
+					this.logger?.warn(
+						`[ElevenLabs] Failed to delete cloned voice ${voiceId} on shutdown: ${err.message}`,
+					);
+				}),
+			);
+		}
+		await Promise.allSettled(deletePromises);
+		this.clonedVoiceCache.clear();
 	}
 }
 
@@ -595,6 +648,12 @@ const plugin: WOPRPlugin & {
 		_provider = new ElevenLabsTTSProvider({
 			apiKey: process.env.ELEVENLABS_API_KEY,
 		});
+		_provider.logger = ctx.log;
+
+		ctx.log.warn(
+			"[ElevenLabs] Cloned voice cache is in-memory only. Voices will be recreated after restart. " +
+				"Evicted and shutdown voices are deleted from ElevenLabs automatically.",
+		);
 
 		// Initialize voice cache on startup (fire-and-forget)
 		_provider.fetchVoices().catch((err: Error) => {

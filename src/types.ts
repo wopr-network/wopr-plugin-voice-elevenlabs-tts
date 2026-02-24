@@ -132,6 +132,7 @@ export interface ElevenLabsTTSRequest {
 	previous_text?: string;
 	next_text?: string;
 	language_code?: string;
+	speed?: number;
 }
 
 export interface ElevenLabsConfig {

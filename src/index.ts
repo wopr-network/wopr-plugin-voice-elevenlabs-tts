@@ -6,6 +6,7 @@
  */
 
 import type { WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
+import { createHash } from "crypto";
 import fetch from "node-fetch";
 import type {
 	AudioFormat,
@@ -301,8 +302,8 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 	private async getOrCreateClonedVoice(
 		referenceAudio: Buffer,
 	): Promise<string> {
-		// Simple hash: use first 32 bytes + length as cache key
-		const hashKey = `${referenceAudio.length}-${referenceAudio.subarray(0, 32).toString("hex")}`;
+		// SHA-256 of full buffer as cache key to avoid collision on identical WAV headers
+		const hashKey = createHash("sha256").update(referenceAudio).digest("hex");
 
 		const cached = this.clonedVoiceCache.get(hashKey);
 		if (cached) return cached;
@@ -335,6 +336,11 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		}
 
 		const data = (await response.json()) as { voice_id: string };
+		// Evict oldest entry if cache has reached cap of 50
+		if (this.clonedVoiceCache.size >= 50) {
+			const oldestKey = this.clonedVoiceCache.keys().next().value;
+			if (oldestKey !== undefined) this.clonedVoiceCache.delete(oldestKey);
+		}
 		this.clonedVoiceCache.set(hashKey, data.voice_id);
 		return data.voice_id;
 	}
@@ -489,7 +495,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		const modelId =
 			opts.modelId || this.config.defaultModelId || "eleven_turbo_v2_5";
 		const outputFormat = opts.outputFormat || mapAudioFormat(options?.format);
-		const _speed = resolveSpeed(opts.speed, opts.rate);
+		const speed = resolveSpeed(opts.speed, opts.rate);
 
 		const requestBody: ElevenLabsTTSRequest = {
 			text: cleanText,
@@ -507,6 +513,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 			},
 			seed: validateSeed(opts.seed),
 			language_code: opts.language,
+			speed,
 		};
 
 		const queryParams = new URLSearchParams({ output_format: outputFormat });

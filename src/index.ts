@@ -23,6 +23,8 @@ import type {
 } from "./types.js";
 import { getWebMCPHandlers, getWebMCPToolDeclarations } from "./webmcp.js";
 
+let log: import("@wopr-network/plugin-types").PluginLogger | null = null;
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -395,7 +397,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		const cleanText = stripped || text;
 
 		if (unknownKeys.length > 0) {
-			console.warn(
+			log?.warn(
 				`[ElevenLabs] Unknown directive keys: ${unknownKeys.join(", ")}`,
 			);
 		}
@@ -507,7 +509,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		const cleanText = stripped || text;
 
 		if (unknownKeys.length > 0) {
-			console.warn(
+			log?.warn(
 				`[ElevenLabs] Unknown directive keys: ${unknownKeys.join(", ")}`,
 			);
 		}
@@ -645,6 +647,7 @@ const plugin: WOPRPlugin & {
 	description: "ElevenLabs high-quality text-to-speech",
 
 	async init(ctx: WOPRPluginContext) {
+		log = ctx.log;
 		_provider = new ElevenLabsTTSProvider({
 			apiKey: process.env.ELEVENLABS_API_KEY,
 		});
@@ -657,7 +660,7 @@ const plugin: WOPRPlugin & {
 
 		// Initialize voice cache on startup (fire-and-forget)
 		_provider.fetchVoices().catch((err: Error) => {
-			console.warn(
+			log?.warn(
 				"Failed to fetch ElevenLabs voices on startup:",
 				err.message,
 			);
@@ -676,7 +679,7 @@ const plugin: WOPRPlugin & {
 					name: _provider.metadata.description || _provider.metadata.name,
 				});
 			} catch (err) {
-				console.warn(
+				log?.warn(
 					"Failed to register TTS capability provider:",
 					err instanceof Error ? err.message : err,
 				);

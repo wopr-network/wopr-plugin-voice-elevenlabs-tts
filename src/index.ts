@@ -5,8 +5,12 @@
  * Based on clawdbot PR 1154 talk mode implementation.
  */
 
-import type { WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
+import type {
+	PluginManifest,
+	WOPRPlugin,
+	WOPRPluginContext,
+} from "@wopr-network/plugin-types";
 import fetch from "node-fetch";
 import type {
 	AudioFormat,
@@ -23,7 +27,8 @@ import type {
 } from "./types.js";
 import { getWebMCPHandlers, getWebMCPToolDeclarations } from "./webmcp.js";
 
-let log: import("@wopr-network/plugin-types").PluginLogger | null = null;
+let ctx: WOPRPluginContext | null = null;
+const cleanups: Array<() => void> = [];
 
 // =============================================================================
 // Helper Functions
@@ -397,7 +402,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		const cleanText = stripped || text;
 
 		if (unknownKeys.length > 0) {
-			log?.warn(
+			ctx?.log.warn(
 				`[ElevenLabs] Unknown directive keys: ${unknownKeys.join(", ")}`,
 			);
 		}
@@ -459,7 +464,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		if (opts.latencyTier !== undefined) {
 			queryParams.set(
 				"optimize_streaming_latency",
-				validateLatencyTier(opts.latencyTier)!.toString(),
+				String(validateLatencyTier(opts.latencyTier)),
 			);
 		}
 
@@ -509,7 +514,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		const cleanText = stripped || text;
 
 		if (unknownKeys.length > 0) {
-			log?.warn(
+			ctx?.log.warn(
 				`[ElevenLabs] Unknown directive keys: ${unknownKeys.join(", ")}`,
 			);
 		}
@@ -565,7 +570,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 		if (opts.latencyTier !== undefined) {
 			queryParams.set(
 				"optimize_streaming_latency",
-				validateLatencyTier(opts.latencyTier)!.toString(),
+				String(validateLatencyTier(opts.latencyTier)),
 			);
 		} else {
 			queryParams.set("optimize_streaming_latency", "0"); // Default to lowest latency for streaming
@@ -634,20 +639,82 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 
 let _provider: ElevenLabsTTSProvider | null = null;
 
+const PLUGIN_ID = "voice-elevenlabs-tts";
+
+const pluginManifest: PluginManifest = {
+	name: PLUGIN_ID,
+	version: "1.0.0",
+	description: "ElevenLabs high-quality text-to-speech",
+	category: "voice",
+	tags: ["tts", "elevenlabs", "voice", "speech-synthesis"],
+	icon: "🔊",
+	capabilities: ["tts"],
+	requires: {
+		env: ["ELEVENLABS_API_KEY"],
+		network: { outbound: true, hosts: ["api.elevenlabs.io"] },
+	},
+	provides: {
+		capabilities: [
+			{
+				type: "tts",
+				id: "elevenlabs",
+				displayName: "ElevenLabs TTS",
+				tier: "byok",
+			},
+		],
+	},
+	lifecycle: {
+		shutdownBehavior: "graceful",
+		shutdownTimeoutMs: 10000,
+	},
+	configSchema: {
+		title: "ElevenLabs TTS Configuration",
+		description: "Configure ElevenLabs text-to-speech API access",
+		fields: [
+			{
+				name: "apiKey",
+				type: "password",
+				label: "ElevenLabs API Key",
+				description: "ElevenLabs API key from elevenlabs.io",
+				required: true,
+				secret: true,
+				setupFlow: "paste",
+			},
+			{
+				name: "defaultVoiceId",
+				type: "text",
+				label: "Default Voice ID",
+				description: "Default ElevenLabs voice ID",
+				required: false,
+			},
+			{
+				name: "defaultModelId",
+				type: "text",
+				label: "Default Model ID",
+				description: "Default ElevenLabs model ID",
+				required: false,
+				default: "eleven_turbo_v2_5",
+			},
+		],
+	},
+};
+
 // Extended with getManifest/getWebMCPHandlers for webui bindPluginLifecycle()
 const plugin: WOPRPlugin & {
+	manifest: PluginManifest;
 	getManifest(): { webmcpTools: ReturnType<typeof getWebMCPToolDeclarations> };
 	getWebMCPHandlers(): Record<
 		string,
 		(input: Record<string, unknown>) => Promise<unknown>
 	>;
 } = {
-	name: "voice-elevenlabs-tts",
+	name: PLUGIN_ID,
 	version: "1.0.0",
 	description: "ElevenLabs high-quality text-to-speech",
+	manifest: pluginManifest,
 
-	async init(ctx: WOPRPluginContext) {
-		log = ctx.log;
+	async init(pluginCtx: WOPRPluginContext) {
+		ctx = pluginCtx;
 		_provider = new ElevenLabsTTSProvider({
 			apiKey: process.env.ELEVENLABS_API_KEY,
 		});
@@ -658,30 +725,65 @@ const plugin: WOPRPlugin & {
 				"Evicted and shutdown voices are deleted from ElevenLabs automatically.",
 		);
 
+		// Register config schema (always defined; if-check satisfies type narrowing)
+		if (pluginManifest.configSchema) {
+			ctx.registerConfigSchema(PLUGIN_ID, pluginManifest.configSchema);
+			cleanups.push(() => {
+				ctx?.unregisterConfigSchema(PLUGIN_ID);
+			});
+		}
+
 		// Initialize voice cache on startup (fire-and-forget)
-		_provider.fetchVoices().catch((err: Error) => {
-			log?.warn(
+		_provider.fetchVoices().catch((err: unknown) => {
+			ctx?.log.warn(
 				"Failed to fetch ElevenLabs voices on startup:",
-				err.message,
+				err instanceof Error ? err.message : String(err),
 			);
 		});
 
 		ctx.registerExtension("tts", _provider);
+		cleanups.push(() => {
+			ctx?.unregisterExtension("tts");
+		});
 
 		// registerCapabilityProvider exists at runtime but not yet in published types
+		type CtxWithCapabilityProvider = {
+			registerCapabilityProvider(
+				type: string,
+				provider: { id: string; name: string },
+			): void;
+			unregisterCapabilityProvider?(type: string, id: string): void;
+		};
 		if (
-			"registerCapabilityProvider" in ctx &&
-			typeof (ctx as any).registerCapabilityProvider === "function"
+			"registerCapabilityProvider" in pluginCtx &&
+			typeof (pluginCtx as unknown as CtxWithCapabilityProvider)
+				.registerCapabilityProvider === "function"
 		) {
+			const extCtx = pluginCtx as unknown as CtxWithCapabilityProvider;
 			try {
-				(ctx as any).registerCapabilityProvider("tts", {
+				extCtx.registerCapabilityProvider("tts", {
 					id: _provider.metadata.name,
 					name: _provider.metadata.description || _provider.metadata.name,
 				});
-			} catch (err) {
-				log?.warn(
+				cleanups.push(() => {
+					if (
+						ctx &&
+						"unregisterCapabilityProvider" in ctx &&
+						typeof (ctx as unknown as CtxWithCapabilityProvider)
+							.unregisterCapabilityProvider === "function"
+					) {
+						(
+							ctx as unknown as CtxWithCapabilityProvider
+						).unregisterCapabilityProvider?.(
+							"tts",
+							_provider?.metadata.name ?? "",
+						);
+					}
+				});
+			} catch (err: unknown) {
+				ctx?.log.warn(
 					"Failed to register TTS capability provider:",
-					err instanceof Error ? err.message : err,
+					err instanceof Error ? err.message : String(err),
 				);
 			}
 		}
@@ -697,10 +799,21 @@ const plugin: WOPRPlugin & {
 	},
 
 	async shutdown() {
+		// Run all cleanup functions in reverse registration order
+		for (const cleanup of cleanups.reverse()) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore cleanup errors during shutdown
+			}
+		}
+		cleanups.length = 0;
+
 		if (_provider) {
 			await _provider.shutdown();
 			_provider = null;
 		}
+		ctx = null;
 	},
 };
 

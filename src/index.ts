@@ -659,7 +659,6 @@ const pluginManifest: PluginManifest = {
 				type: "tts",
 				id: "elevenlabs",
 				displayName: "ElevenLabs TTS",
-				tier: "byok",
 			},
 		],
 	},
